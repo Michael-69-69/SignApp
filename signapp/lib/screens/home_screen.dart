@@ -1,77 +1,114 @@
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
-import 'package:tflite_flutter/tflite_flutter.dart';
+import 'dart:async';
+import 'dart:typed_data';
 import '../widgets/camera_view.dart';
 import '../widgets/detected_sign.dart';
 import '../widgets/bottom_nav_bar.dart';
+import '../services/mediapipe_client.dart';
 
 class SignLanguageHomePage extends StatefulWidget {
-  // 1. Add a camera property to the widget
-  final CameraDescription camera;
+  final CameraDescription? camera;
 
-  const SignLanguageHomePage({super.key, required this.camera});
+  const SignLanguageHomePage({super.key, this.camera});
 
   @override
   State<SignLanguageHomePage> createState() => _SignLanguageHomePageState();
 }
 
 class _SignLanguageHomePageState extends State<SignLanguageHomePage> {
-  // Use 'late' because it will be initialized in initState
   late CameraController _cameraController;
-  Interpreter? _handLandmarksInterpreter;
-  Interpreter? _gestureClassifierInterpreter;
-  String _detectedSign = "Thank you";
+  late MediaPipeClient _mediaPipeClient;
+  String _detectedSign = "Initializing...";
   int _selectedIndex = 1;
   bool _isDetecting = false;
+  bool _serverAvailable = false;
+  List<List<double>> _landmarks = [];
+  Timer? _inferenceTimer;
 
   @override
   void initState() {
     super.initState();
+    _initializeMediaPipe();
     _initializeCamera();
-    _loadModels();
+  }
+
+  Future<void> _initializeMediaPipe() async {
+    _mediaPipeClient = MediaPipeClient();
+    
+    // Check if server is available
+    final available = await _mediaPipeClient.isServerAvailable();
+    setState(() {
+      _serverAvailable = available;
+      if (!available) {
+        _detectedSign = "Server not available - Start Python server";
+      }
+    });
+    
+    print("MediaPipe server available: $available");
   }
 
   Future<void> _initializeCamera() async {
-    // 2. Use the camera passed from the widget
-    _cameraController = CameraController(widget.camera, ResolutionPreset.medium);
+    if (widget.camera == null) {
+      setState(() {
+        _detectedSign = "No camera available";
+      });
+      return;
+    }
+
+    _cameraController = CameraController(
+      widget.camera!,
+      ResolutionPreset.medium,
+      enableAudio: false,
+    );
     
     try {
       await _cameraController.initialize();
       if (!mounted) return;
 
-      _cameraController.startImageStream((CameraImage image) {
-        if (!_isDetecting) {
-          _isDetecting = true;
-          _runModel(image);
-        }
-      });
-
+      if (_serverAvailable) {
+        // Start periodic inference
+        _startInference();
+        setState(() {
+          _detectedSign = "Ready - show your hand";
+        });
+      }
     } catch (e) {
       print("Error initializing camera: $e");
-    }
-
-    // 3. Update the UI to show the camera feed
-    setState(() {});
-  }
-
-  Future<void> _loadModels() async {
-    try {
-      _handLandmarksInterpreter =
-          await Interpreter.fromAsset('hand_landmarks_detector.tflite');
-      _gestureClassifierInterpreter =
-          await Interpreter.fromAsset('canned_gesture_classifier.tflite');
-      print("Models loaded successfully");
-    } catch (e) {
-      print("Failed to load models: $e");
+      setState(() {
+        _detectedSign = "Camera initialization failed";
+      });
     }
   }
 
-  Future<void> _runModel(CameraImage image) async {
-    // TODO: Implement the model inference logic here.
-    
-    await Future.delayed(const Duration(milliseconds: 100));
-
-    _isDetecting = false;
+  void _startInference() {
+    _inferenceTimer = Timer.periodic(Duration(milliseconds: 500), (_) async {
+      if (!_isDetecting && _serverAvailable && mounted) {
+        _isDetecting = true;
+        try {
+          final image = await _cameraController.takePicture();
+          final bytes = await image.readAsBytes();
+          
+          final landmarks = await _mediaPipeClient.detectHands(bytes);
+          
+          if (mounted) {
+            setState(() {
+              if (landmarks.isNotEmpty) {
+                // Flatten landmarks for display (take first hand)
+                _landmarks = landmarks[0];
+                _detectedSign = "Hand detected";
+              } else {
+                _landmarks = [];
+                _detectedSign = "No hand detected";
+              }
+            });
+          }
+        } catch (e) {
+          print("Error running inference: $e");
+        }
+        _isDetecting = false;
+      }
+    });
   }
 
   void _onItemTapped(int index) {
@@ -82,17 +119,28 @@ class _SignLanguageHomePageState extends State<SignLanguageHomePage> {
 
   @override
   void dispose() {
+    _inferenceTimer?.cancel();
     _cameraController.dispose();
-    _handLandmarksInterpreter?.close();
-    _gestureClassifierInterpreter?.close();
+    _mediaPipeClient.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // 4. Check if the controller is initialized before building the preview
     if (!_cameraController.value.isInitialized) {
-      return const Center(child: CircularProgressIndicator());
+      return Scaffold(
+        appBar: AppBar(title: const Text('Sign Language Detector')),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 20),
+              Text(_detectedSign),
+            ],
+          ),
+        ),
+      );
     }
     
     return Scaffold(
@@ -111,11 +159,27 @@ class _SignLanguageHomePageState extends State<SignLanguageHomePage> {
         children: <Widget>[
           Expanded(
             flex: 5,
-            child: CameraView(controller: _cameraController),
+            child: CameraView(
+              controller: _cameraController,
+              landmarks: _landmarks,
+            ),
           ),
           Expanded(
             flex: 2,
-            child: DetectedSign(signText: _detectedSign),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                DetectedSign(signText: _detectedSign),
+                const SizedBox(height: 10),
+                Text(
+                  _serverAvailable ? "✓ Server connected" : "✗ Server not connected",
+                  style: TextStyle(
+                    color: _serverAvailable ? Colors.green : Colors.red,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),

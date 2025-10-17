@@ -1,38 +1,38 @@
 import 'package:flutter/material.dart';
-import 'package:camera/camera.dart'; // Import the camera package
+import 'package:camera/camera.dart';
+import 'dart:developer' as developer;
 import 'screens/home_screen.dart';
 
-// Make main() async to use 'await'
 Future<void> main() async {
-  // 1. Ensure that plugin services are initialized
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 2. Obtain a list of the available cameras on the device.
-  final cameras = await availableCameras();
+  CameraDescription? firstCamera;
+  try {
+    final cameras = await availableCameras();
+    if (cameras.isNotEmpty) firstCamera = cameras.first;
+  } catch (e, st) {
+    developer.log('availableCameras failed: $e', error: e, stackTrace: st);
+  }
 
-  // 3. Get the first camera from the list (usually the laptop webcam).
-  final firstCamera = cameras.first;
-
-  // 4. Run the app and pass the camera to it.
   runApp(MyApp(camera: firstCamera));
 }
 
 class MyApp extends StatelessWidget {
-  final CameraDescription camera;
-
-  // Receive the camera
-  const MyApp({super.key, required this.camera});
+  final CameraDescription? camera;
+  const MyApp({Key? key, this.camera}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'SignApp',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
-        useMaterial3: true,
-      ),
-      // Pass the camera down to the home page
-      home: SignLanguageHomePage(camera: camera),
+      theme: ThemeData(primarySwatch: Colors.blue),
+      home: camera != null
+          ? SignLanguageHomePage(camera: camera!)
+          : const Scaffold(
+              body: Center(
+                child: Text('No camera available'),
+              ),
+            ),
     );
   }
 }

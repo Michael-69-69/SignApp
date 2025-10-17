@@ -10,9 +10,10 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  
-  camera: ^0.11.0+1
-  tflite_flutter: ^0.11.0
+  camera: any
+  camera_windows: any
+  http: ^1.1.0
+  image: any
 
   cupertino_icons: ^1.0.8
 
@@ -27,6 +28,10 @@ flutter:
   assets:
     - assets/
 
+
+
 # Add this section to fix the build error
 dependency_overrides:
   win32: ^5.0.0
+  ffi: ^2.1.0
+  tflite_flutter: ^0.11.0
